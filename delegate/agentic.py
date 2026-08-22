@@ -21,7 +21,7 @@ from openai import OpenAI
 
 from .concurrency import limit_concurrency
 from .config import load_config
-from .logging import log_delegation
+from .logging import format_usage_suffix, log_delegation
 from .tools import TOOL_SCHEMAS, ToolError, read_file, run_bash, write_file
 
 SYSTEM_PROMPT = """You are an autonomous coding agent working in: {working_dir}
@@ -74,6 +74,9 @@ def run_agentic_task(
             usage=usage_totals if usage_seen else None,
         )
 
+    def _usage_suffix() -> str:
+        return format_usage_suffix(usage_totals if usage_seen else None)
+
     try:
         resolved_dir = Path(working_dir).resolve()
         if not resolved_dir.is_dir():
@@ -97,7 +100,7 @@ def run_agentic_task(
                 if remaining <= 0:
                     msg = f"Error: timed out after {timeout_seconds}s without completing the task"
                     _log(False, msg)
-                    return msg
+                    return msg + _usage_suffix()
 
                 response = client.chat.completions.create(
                     model=resolved_model,
@@ -117,7 +120,7 @@ def run_agentic_task(
                 if not message.tool_calls:
                     result = message.content or ""
                     _log(True, result)
-                    return result
+                    return result + _usage_suffix()
 
                 messages.append(message.model_dump(exclude_none=True))
 
@@ -126,7 +129,7 @@ def run_agentic_task(
                     if remaining <= 0:
                         msg = f"Error: timed out after {timeout_seconds}s without completing the task"
                         _log(False, msg)
-                        return msg
+                        return msg + _usage_suffix()
 
                     try:
                         arguments = json.loads(tool_call.function.arguments)
@@ -145,7 +148,7 @@ def run_agentic_task(
 
             msg = f"Error: hit max_iterations ({max_iterations}) without completing the task"
             _log(False, msg)
-            return msg
+            return msg + _usage_suffix()
     except Exception as exc:
         _log(False, f"{type(exc).__name__}: {exc}")
         raise

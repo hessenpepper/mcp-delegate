@@ -89,6 +89,24 @@ def log_delegation(
         pass
 
 
+def format_usage_suffix(usage: dict | None) -> str:
+    """Render a trailing '[tokens: ...]' line for a tool's return string, so
+    the calling agent sees token usage without a separate
+    list_recent_delegations call. Empty string if no usage is available."""
+    if not usage:
+        return ""
+    parts = []
+    if usage.get("prompt_tokens") is not None:
+        parts.append(f"{usage['prompt_tokens']} prompt")
+    if usage.get("completion_tokens") is not None:
+        parts.append(f"{usage['completion_tokens']} completion")
+    if usage.get("total_tokens") is not None:
+        parts.append(f"{usage['total_tokens']} total")
+    if not parts:
+        return ""
+    return "\n\n[tokens: " + " / ".join(parts) + "]"
+
+
 def list_recent(limit: int = 20) -> list[dict]:
     with contextlib.closing(_connect()) as conn:
         conn.row_factory = sqlite3.Row

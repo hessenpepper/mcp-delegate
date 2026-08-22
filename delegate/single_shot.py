@@ -6,7 +6,7 @@ from openai import OpenAI
 
 from .concurrency import limit_concurrency
 from .config import load_config
-from .logging import log_delegation
+from .logging import format_usage_suffix, log_delegation
 
 
 def run_single_shot(
@@ -63,4 +63,4 @@ def run_single_shot(
         usage=usage,
     )
 
-    return result
+    return result + format_usage_suffix(usage)

@@ -93,6 +93,11 @@ token usage if the backend returned it. Query it via the `list_recent_delegation
 directly with `sqlite3 delegations.db "select * from delegations order by id desc limit 20"`.
 Logging is best-effort — a logging failure won't take down an otherwise-successful delegation.
 
+Both tools also append a trailing `[tokens: N prompt / N completion / N total]` line to their
+own return value when the backend reports usage, so the calling agent sees it immediately
+without a separate `list_recent_delegations` call. No dollar-cost calculation is done anywhere
+(that would need a per-model pricing table) — token counts only.
+
 ### Register with Claude Code
 
 A project-scoped [.mcp.json](.mcp.json) is already checked in (`uv run server.py`). Restart
