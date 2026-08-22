@@ -3,7 +3,8 @@
 Gives the delegated model its own tool-use loop (file read/write, bash)
 scoped to a caller-specified working directory, running to completion or a
 stop condition (no tool call, max iterations, or timeout), and returning
-only the final answer - not the full transcript.
+only the final answer - not the full transcript, unless capture_transcript
+is set (for evaluation/comparison runs - see delegate/logging.py).
 
 Runs in-process rather than spawning agent-loop as a subprocess: agent-loop
 only supports Linux/macOS/WSL, and this server needs to run natively on
@@ -53,15 +54,19 @@ def run_agentic_task(
     max_iterations: int = 20,
     timeout_seconds: int = 600,
     backend: str | None = None,
+    capture_transcript: bool = False,
 ) -> str:
     started_at = datetime.datetime.now(datetime.timezone.utc)
     resolved_model = model
     iterations_used = 0
     usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     usage_seen = False
+    messages: list[dict] = []
 
-    def _log(success: bool, result_preview: str) -> None:
-        log_delegation(
+    def _finish(success: bool, result_preview: str) -> str:
+        """Log the delegation and return a suffix (usage + delegation_id)
+        to append to whatever string the caller is about to return."""
+        delegation_id = log_delegation(
             tool="delegate_agentic_task",
             backend=backend,
             model=resolved_model,
@@ -72,10 +77,12 @@ def run_agentic_task(
             success=success,
             result_preview=result_preview,
             usage=usage_totals if usage_seen else None,
+            transcript=messages if capture_transcript else None,
         )
-
-    def _usage_suffix() -> str:
-        return format_usage_suffix(usage_totals if usage_seen else None)
+        suffix = format_usage_suffix(usage_totals if usage_seen else None)
+        if capture_transcript and delegation_id is not None:
+            suffix += f"\n\n[delegation_id: {delegation_id}]"
+        return suffix
 
     try:
         resolved_dir = Path(working_dir).resolve()
@@ -86,10 +93,8 @@ def run_agentic_task(
         resolved_model = model or config.model
         client = OpenAI(base_url=config.base_url, api_key=config.api_key)
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT.format(working_dir=resolved_dir)},
-            {"role": "user", "content": task},
-        ]
+        messages.append({"role": "system", "content": SYSTEM_PROMPT.format(working_dir=resolved_dir)})
+        messages.append({"role": "user", "content": task})
 
         deadline = time.monotonic() + timeout_seconds
 
@@ -99,8 +104,7 @@ def run_agentic_task(
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     msg = f"Error: timed out after {timeout_seconds}s without completing the task"
-                    _log(False, msg)
-                    return msg + _usage_suffix()
+                    return msg + _finish(False, msg)
 
                 response = client.chat.completions.create(
                     model=resolved_model,
@@ -116,20 +120,17 @@ def run_agentic_task(
                         usage_totals[key] += usage_dict.get(key) or 0
 
                 message = response.choices[0].message
+                messages.append(message.model_dump(exclude_none=True))
 
                 if not message.tool_calls:
                     result = message.content or ""
-                    _log(True, result)
-                    return result + _usage_suffix()
-
-                messages.append(message.model_dump(exclude_none=True))
+                    return result + _finish(True, result)
 
                 for tool_call in message.tool_calls:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         msg = f"Error: timed out after {timeout_seconds}s without completing the task"
-                        _log(False, msg)
-                        return msg + _usage_suffix()
+                        return msg + _finish(False, msg)
 
                     try:
                         arguments = json.loads(tool_call.function.arguments)
@@ -147,8 +148,7 @@ def run_agentic_task(
                     )
 
             msg = f"Error: hit max_iterations ({max_iterations}) without completing the task"
-            _log(False, msg)
-            return msg + _usage_suffix()
+            return msg + _finish(False, msg)
     except Exception as exc:
-        _log(False, f"{type(exc).__name__}: {exc}")
+        _finish(False, f"{type(exc).__name__}: {exc}")
         raise

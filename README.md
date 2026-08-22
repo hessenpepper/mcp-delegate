@@ -19,6 +19,8 @@ Phase 1, 2, 3, and 4 complete.
   stops calling tools, hits `max_iterations`, or exceeds `timeout_seconds`.
 - `list_recent_delegations` — inspect what past delegations (either tool) actually did, without
   digging through logs or re-running anything.
+- `get_delegation_transcript` — full message/tool-call transcript for one delegation, when it
+  was run with `capture_transcript=True` (e.g. for model comparison/eval runs).
 
 **Deviation from the original plan:** Phase 2 called for wrapping
 [agent-loop](https://github.com/AlessandroAnnini/agent-loop) as a subprocess. agent-loop only
@@ -98,6 +100,18 @@ own return value when the backend reports usage, so the calling agent sees it im
 without a separate `list_recent_delegations` call. No dollar-cost calculation is done anywhere
 (that would need a per-model pricing table) — token counts only.
 
+### Transcript capture (model comparison / eval runs)
+
+Both tools take `capture_transcript: bool = False`. When set, the full message exchange —
+every model message, tool call, and tool result, not just the final answer — is logged, and
+the return value gets a `[delegation_id: N]` suffix. Fetch it with
+`get_delegation_transcript(delegation_id)`.
+
+This exists for running the same task through several different models/backends and comparing
+not just the final answer but *how* each one got there (tool selection, malformed tool calls,
+retries) — e.g. a bake-off across candidate models before picking one for production use.
+Off by default since it's extra logging overhead you don't want for routine delegation.
+
 ### Register with Claude Code
 
 A project-scoped [.mcp.json](.mcp.json) is already checked in (`uv run server.py`). Restart
@@ -106,13 +120,15 @@ server, then ask it to call `delegate_task` with a trivial prompt to confirm the
 
 ## Tools
 
-- `delegate_task(prompt, model=None, system_prompt=None, backend=None) -> str` — single-shot
-  chat completion against the configured backend.
-- `delegate_agentic_task(task, working_dir, model=None, max_iterations=20, timeout_seconds=600, backend=None) -> str` —
+- `delegate_task(prompt, model=None, system_prompt=None, backend=None, capture_transcript=False) -> str` —
+  single-shot chat completion against the configured backend.
+- `delegate_agentic_task(task, working_dir, model=None, max_iterations=20, timeout_seconds=600, backend=None, capture_transcript=False) -> str` —
   multi-step delegation with `read_file`/`write_file`/`run_bash` tools scoped to `working_dir`.
-  Returns only the final answer, not the full transcript.
+  Returns only the final answer, not the full transcript, unless `capture_transcript=True`.
 - `list_recent_delegations(limit=20) -> list[dict]` — most recent logged delegations, newest
   first.
+- `get_delegation_transcript(delegation_id) -> list[dict]` — full transcript for one delegation
+  logged with `capture_transcript=True`.
 
 `delegate_task`/`delegate_agentic_task` return errors (bad config, unreachable endpoint,
 timeout, iteration cap) as `"Error: ..."` strings rather than raising, so a calling agent can
