@@ -18,6 +18,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from .concurrency import limit_concurrency
 from .config import load_config
 from .tools import TOOL_SCHEMAS, ToolError, read_file, run_bash, write_file
 
@@ -49,12 +50,13 @@ def run_agentic_task(
     model: str | None = None,
     max_iterations: int = 20,
     timeout_seconds: int = 600,
+    backend: str | None = None,
 ) -> str:
     resolved_dir = Path(working_dir).resolve()
     if not resolved_dir.is_dir():
         raise ValueError(f"working_dir does not exist or is not a directory: {working_dir}")
 
-    config = load_config()
+    config = load_config(backend)
     client = OpenAI(base_url=config.base_url, api_key=config.api_key)
 
     messages = [
@@ -64,42 +66,43 @@ def run_agentic_task(
 
     deadline = time.monotonic() + timeout_seconds
 
-    for _ in range(max_iterations):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return f"Error: timed out after {timeout_seconds}s without completing the task"
-
-        response = client.chat.completions.create(
-            model=model or config.model,
-            messages=messages,
-            tools=TOOL_SCHEMAS,
-            timeout=remaining,
-        )
-        message = response.choices[0].message
-
-        if not message.tool_calls:
-            return message.content or ""
-
-        messages.append(message.model_dump(exclude_none=True))
-
-        for tool_call in message.tool_calls:
+    with limit_concurrency():
+        for _ in range(max_iterations):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return f"Error: timed out after {timeout_seconds}s without completing the task"
 
-            try:
-                arguments = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError:
-                result = "error: could not parse tool arguments"
-            else:
-                result = _dispatch_tool(resolved_dir, tool_call.function.name, arguments, remaining)
-
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result,
-                }
+            response = client.chat.completions.create(
+                model=model or config.model,
+                messages=messages,
+                tools=TOOL_SCHEMAS,
+                timeout=remaining,
             )
+            message = response.choices[0].message
 
-    return f"Error: hit max_iterations ({max_iterations}) without completing the task"
+            if not message.tool_calls:
+                return message.content or ""
+
+            messages.append(message.model_dump(exclude_none=True))
+
+            for tool_call in message.tool_calls:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return f"Error: timed out after {timeout_seconds}s without completing the task"
+
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    result = "error: could not parse tool arguments"
+                else:
+                    result = _dispatch_tool(resolved_dir, tool_call.function.name, arguments, remaining)
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result,
+                    }
+                )
+
+        return f"Error: hit max_iterations ({max_iterations}) without completing the task"

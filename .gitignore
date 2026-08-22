@@ -12,6 +12,8 @@ env/
 # Environment / secrets
 .env
 .env.*
+!.env.example
+models.json
 
 # Editors
 .vscode/

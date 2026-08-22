@@ -2,6 +2,7 @@
 
 from openai import OpenAI
 
+from .concurrency import limit_concurrency
 from .config import load_config
 
 
@@ -9,8 +10,9 @@ def run_single_shot(
     prompt: str,
     model: str | None = None,
     system_prompt: str | None = None,
+    backend: str | None = None,
 ) -> str:
-    config = load_config()
+    config = load_config(backend)
     client = OpenAI(base_url=config.base_url, api_key=config.api_key)
 
     messages = []
@@ -18,9 +20,10 @@ def run_single_shot(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    response = client.chat.completions.create(
-        model=model or config.model,
-        messages=messages,
-    )
+    with limit_concurrency():
+        response = client.chat.completions.create(
+            model=model or config.model,
+            messages=messages,
+        )
 
     return response.choices[0].message.content or ""

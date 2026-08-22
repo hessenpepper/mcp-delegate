@@ -13,17 +13,21 @@ def delegate_task(
     prompt: str,
     model: str | None = None,
     system_prompt: str | None = None,
+    backend: str | None = None,
 ) -> str:
     """Delegate a single-shot task to a configured OpenAI-compatible model
     (e.g. local Ollama or OpenRouter) and return its text response verbatim.
 
     Args:
         prompt: The task/question to send to the delegated model.
-        model: Override the model configured via DELEGATE_MODEL.
+        model: Override just the model string for this call.
         system_prompt: Optional system prompt to steer the delegated model.
+        backend: Named backend from models.json (base_url/model/api_key) to
+            use instead of the default DELEGATE_* env vars. `model`, if also
+            given, overrides the model within that backend.
     """
     try:
-        return run_single_shot(prompt, model=model, system_prompt=system_prompt)
+        return run_single_shot(prompt, model=model, system_prompt=system_prompt, backend=backend)
     except Exception as exc:
         return f"Error: {exc}"
 
@@ -35,6 +39,7 @@ def delegate_agentic_task(
     model: str | None = None,
     max_iterations: int = 20,
     timeout_seconds: int = 600,
+    backend: str | None = None,
 ) -> str:
     """Delegate a multi-step task to a model with its own tool-use loop
     (read_file, write_file, run_bash) scoped to working_dir. Runs until the
@@ -48,9 +53,12 @@ def delegate_agentic_task(
     Args:
         task: The task instruction to give the delegated model.
         working_dir: Directory the model's tools are scoped to.
-        model: Override the model configured via DELEGATE_MODEL.
+        model: Override just the model string for this call.
         max_iterations: Stop after this many tool-call rounds.
         timeout_seconds: Wall-clock budget for the whole task.
+        backend: Named backend from models.json (base_url/model/api_key) to
+            use instead of the default DELEGATE_* env vars. `model`, if also
+            given, overrides the model within that backend.
     """
     try:
         return run_agentic_task(
@@ -59,6 +67,7 @@ def delegate_agentic_task(
             model=model,
             max_iterations=max_iterations,
             timeout_seconds=timeout_seconds,
+            backend=backend,
         )
     except Exception as exc:
         return f"Error: {exc}"
