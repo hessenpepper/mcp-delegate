@@ -10,9 +10,27 @@ plan, phased as separate commits/checkpoints.
 
 ## Status
 
-Phase 1 complete: bare MCP server with a single `delegate_task` tool that forwards a
-prompt to a configured OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter, ...)
-and returns the text response. No tool-use loop yet — see the plan for later phases.
+Phase 1 and 2 complete.
+
+- `delegate_task` — single-shot chat completion against a configured OpenAI-compatible
+  endpoint (Ollama, LM Studio, vLLM, OpenRouter, ...).
+- `delegate_agentic_task` — gives the delegated model its own tool-use loop (`read_file`,
+  `write_file`, `run_bash`) scoped to a caller-specified working directory, running until it
+  stops calling tools, hits `max_iterations`, or exceeds `timeout_seconds`.
+
+**Deviation from the original plan:** Phase 2 called for wrapping
+[agent-loop](https://github.com/AlessandroAnnini/agent-loop) as a subprocess. agent-loop only
+supports Linux/macOS/WSL, and this server needs to run natively on Windows, so we built the
+in-process loop described as Phase 5's alternative instead — same tool interface, no
+subprocess/ANSI-stripping complexity, and it sidesteps agent-loop's AGPL/no-commercial license
+entirely. See [delegate/agentic.py](delegate/agentic.py).
+
+**Safety note:** `working_dir` is caller-specified, not a fixed sandbox — the delegated model
+gets unattended file/bash access to whatever directory it's pointed at. File tools
+(`read_file`/`write_file`) are scoped to stay within `working_dir`; `run_bash` runs with that
+directory as `cwd` but shell commands are not fully sandboxed and could escape it (e.g. `cd ..`).
+Point this at a directory you're comfortable an unattended model can read, write, and execute
+commands in.
 
 ## Setup
 
@@ -37,6 +55,10 @@ server, then ask it to call `delegate_task` with a trivial prompt to confirm the
 ## Tools
 
 - `delegate_task(prompt, model=None, system_prompt=None) -> str` — single-shot chat
-  completion against the configured backend. Errors (bad config, unreachable endpoint) are
-  returned as `"Error: ..."` strings rather than raising, so a calling agent can see what
-  went wrong.
+  completion against the configured backend.
+- `delegate_agentic_task(task, working_dir, model=None, max_iterations=20, timeout_seconds=600) -> str` —
+  multi-step delegation with `read_file`/`write_file`/`run_bash` tools scoped to `working_dir`.
+  Returns only the final answer, not the full transcript.
+
+Both tools return errors (bad config, unreachable endpoint, timeout, iteration cap) as
+`"Error: ..."` strings rather than raising, so a calling agent can see what went wrong.

@@ -2,6 +2,7 @@
 
 from mcp.server.mcpserver import MCPServer
 
+from delegate.agentic import run_agentic_task
 from delegate.single_shot import run_single_shot
 
 mcp = MCPServer("delegate")
@@ -23,6 +24,42 @@ def delegate_task(
     """
     try:
         return run_single_shot(prompt, model=model, system_prompt=system_prompt)
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+@mcp.tool()
+def delegate_agentic_task(
+    task: str,
+    working_dir: str,
+    model: str | None = None,
+    max_iterations: int = 20,
+    timeout_seconds: int = 600,
+) -> str:
+    """Delegate a multi-step task to a model with its own tool-use loop
+    (read_file, write_file, run_bash) scoped to working_dir. Runs until the
+    model stops calling tools, hits max_iterations, or exceeds
+    timeout_seconds. Returns only the final answer, not the full transcript.
+
+    The delegated model gets unattended file/bash access within working_dir
+    for the duration of the call - point it at a directory you're comfortable
+    it can read, write, and execute commands in.
+
+    Args:
+        task: The task instruction to give the delegated model.
+        working_dir: Directory the model's tools are scoped to.
+        model: Override the model configured via DELEGATE_MODEL.
+        max_iterations: Stop after this many tool-call rounds.
+        timeout_seconds: Wall-clock budget for the whole task.
+    """
+    try:
+        return run_agentic_task(
+            task,
+            working_dir,
+            model=model,
+            max_iterations=max_iterations,
+            timeout_seconds=timeout_seconds,
+        )
     except Exception as exc:
         return f"Error: {exc}"
 
