@@ -3,6 +3,7 @@
 from mcp.server.mcpserver import MCPServer
 
 from delegate.agentic import run_agentic_task
+from delegate.logging import list_recent
 from delegate.single_shot import run_single_shot
 
 mcp = MCPServer("delegate")
@@ -71,6 +72,19 @@ def delegate_agentic_task(
         )
     except Exception as exc:
         return f"Error: {exc}"
+
+
+@mcp.tool()
+def list_recent_delegations(limit: int = 20) -> list[dict]:
+    """List the most recent delegate_task / delegate_agentic_task calls
+    (backend, model, task, duration, iterations, success, token usage,
+    truncated result), most recent first. Answers "what did the delegated
+    model actually do" without re-running anything.
+
+    Args:
+        limit: Max number of records to return (default 20).
+    """
+    return list_recent(limit=limit)
 
 
 if __name__ == "__main__":

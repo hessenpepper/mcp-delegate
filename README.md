@@ -10,13 +10,15 @@ plan, phased as separate commits/checkpoints.
 
 ## Status
 
-Phase 1, 2, and 3 complete.
+Phase 1, 2, 3, and 4 complete.
 
 - `delegate_task` — single-shot chat completion against a configured OpenAI-compatible
   endpoint (Ollama, LM Studio, vLLM, OpenRouter, ...).
 - `delegate_agentic_task` — gives the delegated model its own tool-use loop (`read_file`,
   `write_file`, `run_bash`) scoped to a caller-specified working directory, running until it
   stops calling tools, hits `max_iterations`, or exceeds `timeout_seconds`.
+- `list_recent_delegations` — inspect what past delegations (either tool) actually did, without
+  digging through logs or re-running anything.
 
 **Deviation from the original plan:** Phase 2 called for wrapping
 [agent-loop](https://github.com/AlessandroAnnini/agent-loop) as a subprocess. agent-loop only
@@ -31,6 +33,13 @@ gets unattended file/bash access to whatever directory it's pointed at. File too
 directory as `cwd` but shell commands are not fully sandboxed and could escape it (e.g. `cd ..`).
 Point this at a directory you're comfortable an unattended model can read, write, and execute
 commands in.
+
+**Guardrail note:** the original plan's Phase 4 asked to confirm agent-loop's own guardrails
+(iteration cap, repetition detection) were active. Since we're not using agent-loop, that
+doesn't apply directly — our loop has its own `max_iterations` and `timeout_seconds` caps
+(verified in testing), but no repetition detection. A model that gets stuck alternating between
+two tool calls will run until it hits `max_iterations` rather than being caught early. Worth
+adding if that turns out to happen in practice.
 
 ## Setup
 
@@ -75,6 +84,15 @@ stdio for an MCP client):
 uv run server.py
 ```
 
+### Logging
+
+Every `delegate_task`/`delegate_agentic_task` call — success or failure — is logged to a local
+SQLite file, `delegations.db` (gitignored, created on first use): tool, backend, model, task
+text, start/end time, iteration count, success/failure, a truncated result/error preview, and
+token usage if the backend returned it. Query it via the `list_recent_delegations` tool, or
+directly with `sqlite3 delegations.db "select * from delegations order by id desc limit 20"`.
+Logging is best-effort — a logging failure won't take down an otherwise-successful delegation.
+
 ### Register with Claude Code
 
 A project-scoped [.mcp.json](.mcp.json) is already checked in (`uv run server.py`). Restart
@@ -88,6 +106,9 @@ server, then ask it to call `delegate_task` with a trivial prompt to confirm the
 - `delegate_agentic_task(task, working_dir, model=None, max_iterations=20, timeout_seconds=600, backend=None) -> str` —
   multi-step delegation with `read_file`/`write_file`/`run_bash` tools scoped to `working_dir`.
   Returns only the final answer, not the full transcript.
+- `list_recent_delegations(limit=20) -> list[dict]` — most recent logged delegations, newest
+  first.
 
-Both tools return errors (bad config, unreachable endpoint, timeout, iteration cap) as
-`"Error: ..."` strings rather than raising, so a calling agent can see what went wrong.
+`delegate_task`/`delegate_agentic_task` return errors (bad config, unreachable endpoint,
+timeout, iteration cap) as `"Error: ..."` strings rather than raising, so a calling agent can
+see what went wrong.

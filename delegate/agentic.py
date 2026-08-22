@@ -12,6 +12,7 @@ Windows.
 
 from __future__ import annotations
 
+import datetime
 import json
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from openai import OpenAI
 
 from .concurrency import limit_concurrency
 from .config import load_config
+from .logging import log_delegation
 from .tools import TOOL_SCHEMAS, ToolError, read_file, run_bash, write_file
 
 SYSTEM_PROMPT = """You are an autonomous coding agent working in: {working_dir}
@@ -52,57 +54,98 @@ def run_agentic_task(
     timeout_seconds: int = 600,
     backend: str | None = None,
 ) -> str:
-    resolved_dir = Path(working_dir).resolve()
-    if not resolved_dir.is_dir():
-        raise ValueError(f"working_dir does not exist or is not a directory: {working_dir}")
+    started_at = datetime.datetime.now(datetime.timezone.utc)
+    resolved_model = model
+    iterations_used = 0
+    usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    usage_seen = False
 
-    config = load_config(backend)
-    client = OpenAI(base_url=config.base_url, api_key=config.api_key)
+    def _log(success: bool, result_preview: str) -> None:
+        log_delegation(
+            tool="delegate_agentic_task",
+            backend=backend,
+            model=resolved_model,
+            task=task,
+            started_at=started_at,
+            ended_at=datetime.datetime.now(datetime.timezone.utc),
+            iterations=iterations_used,
+            success=success,
+            result_preview=result_preview,
+            usage=usage_totals if usage_seen else None,
+        )
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(working_dir=resolved_dir)},
-        {"role": "user", "content": task},
-    ]
+    try:
+        resolved_dir = Path(working_dir).resolve()
+        if not resolved_dir.is_dir():
+            raise ValueError(f"working_dir does not exist or is not a directory: {working_dir}")
 
-    deadline = time.monotonic() + timeout_seconds
+        config = load_config(backend)
+        resolved_model = model or config.model
+        client = OpenAI(base_url=config.base_url, api_key=config.api_key)
 
-    with limit_concurrency():
-        for _ in range(max_iterations):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return f"Error: timed out after {timeout_seconds}s without completing the task"
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT.format(working_dir=resolved_dir)},
+            {"role": "user", "content": task},
+        ]
 
-            response = client.chat.completions.create(
-                model=model or config.model,
-                messages=messages,
-                tools=TOOL_SCHEMAS,
-                timeout=remaining,
-            )
-            message = response.choices[0].message
+        deadline = time.monotonic() + timeout_seconds
 
-            if not message.tool_calls:
-                return message.content or ""
-
-            messages.append(message.model_dump(exclude_none=True))
-
-            for tool_call in message.tool_calls:
+        with limit_concurrency():
+            for _ in range(max_iterations):
+                iterations_used += 1
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return f"Error: timed out after {timeout_seconds}s without completing the task"
+                    msg = f"Error: timed out after {timeout_seconds}s without completing the task"
+                    _log(False, msg)
+                    return msg
 
-                try:
-                    arguments = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    result = "error: could not parse tool arguments"
-                else:
-                    result = _dispatch_tool(resolved_dir, tool_call.function.name, arguments, remaining)
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    }
+                response = client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,
+                    tools=TOOL_SCHEMAS,
+                    timeout=remaining,
                 )
 
-        return f"Error: hit max_iterations ({max_iterations}) without completing the task"
+                if response.usage:
+                    usage_seen = True
+                    usage_dict = response.usage.model_dump()
+                    for key in usage_totals:
+                        usage_totals[key] += usage_dict.get(key) or 0
+
+                message = response.choices[0].message
+
+                if not message.tool_calls:
+                    result = message.content or ""
+                    _log(True, result)
+                    return result
+
+                messages.append(message.model_dump(exclude_none=True))
+
+                for tool_call in message.tool_calls:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        msg = f"Error: timed out after {timeout_seconds}s without completing the task"
+                        _log(False, msg)
+                        return msg
+
+                    try:
+                        arguments = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError:
+                        result = "error: could not parse tool arguments"
+                    else:
+                        result = _dispatch_tool(resolved_dir, tool_call.function.name, arguments, remaining)
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        }
+                    )
+
+            msg = f"Error: hit max_iterations ({max_iterations}) without completing the task"
+            _log(False, msg)
+            return msg
+    except Exception as exc:
+        _log(False, f"{type(exc).__name__}: {exc}")
+        raise
