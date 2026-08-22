@@ -12,6 +12,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from .pricing import compute_cost_usd
+
 DB_PATH = Path(__file__).resolve().parent.parent / "delegations.db"
 
 _SCHEMA = """
@@ -33,18 +35,21 @@ CREATE TABLE IF NOT EXISTS delegations (
 );
 """
 
-# Added after the initial schema (transcript capture) - ALTER TABLE rather
-# than a schema bump, since delegations.db is local/disposable and this
-# keeps existing local DBs working without a manual migration step.
+# Added after the initial schema (transcript capture, cost tracking) -
+# ALTER TABLE rather than a schema bump, since delegations.db is
+# local/disposable and this keeps existing local DBs working without a
+# manual migration step.
 _MIGRATIONS = [
     "ALTER TABLE delegations ADD COLUMN transcript TEXT",
+    "ALTER TABLE delegations ADD COLUMN cost_usd REAL",
 ]
 
 _RESULT_PREVIEW_LIMIT = 500
 
 _LIST_COLUMNS = (
     "id, tool, backend, model, task, started_at, ended_at, duration_seconds, "
-    "iterations, success, result_preview, prompt_tokens, completion_tokens, total_tokens"
+    "iterations, success, result_preview, prompt_tokens, completion_tokens, "
+    "total_tokens, cost_usd"
 )
 
 
@@ -78,6 +83,7 @@ def log_delegation(
     shouldn't take down a delegation that otherwise succeeded. Returns the
     new row's id, or None if the write failed."""
     usage = usage or {}
+    cost_usd = compute_cost_usd(model, usage)
     try:
         with contextlib.closing(_connect()) as conn:
             cursor = conn.execute(
@@ -85,8 +91,9 @@ def log_delegation(
                 INSERT INTO delegations (
                     tool, backend, model, task, started_at, ended_at,
                     duration_seconds, iterations, success, result_preview,
-                    prompt_tokens, completion_tokens, total_tokens, transcript
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    prompt_tokens, completion_tokens, total_tokens, transcript,
+                    cost_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tool,
@@ -103,6 +110,7 @@ def log_delegation(
                     usage.get("completion_tokens"),
                     usage.get("total_tokens"),
                     json.dumps(transcript) if transcript is not None else None,
+                    cost_usd,
                 ),
             )
             conn.commit()
@@ -111,10 +119,11 @@ def log_delegation(
         return None
 
 
-def format_usage_suffix(usage: dict | None) -> str:
-    """Render a trailing '[tokens: ...]' line for a tool's return string, so
-    the calling agent sees token usage without a separate
-    list_recent_delegations call. Empty string if no usage is available."""
+def format_usage_suffix(usage: dict | None, model: str | None = None) -> str:
+    """Render a trailing '[tokens: ... ($cost)]' line for a tool's return
+    string, so the calling agent sees usage/cost without a separate
+    list_recent_delegations call. Empty string if no usage is available.
+    Cost is included only when `model` has a pricing.json entry."""
     if not usage:
         return ""
     parts = []
@@ -126,7 +135,13 @@ def format_usage_suffix(usage: dict | None) -> str:
         parts.append(f"{usage['total_tokens']} total")
     if not parts:
         return ""
-    return "\n\n[tokens: " + " / ".join(parts) + "]"
+
+    suffix = "tokens: " + " / ".join(parts)
+    cost_usd = compute_cost_usd(model, usage)
+    if cost_usd is not None:
+        suffix += f" (${cost_usd:.6f})"
+
+    return "\n\n[" + suffix + "]"
 
 
 def list_recent(limit: int = 20) -> list[dict]:

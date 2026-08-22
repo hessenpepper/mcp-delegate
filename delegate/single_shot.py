@@ -66,7 +66,7 @@ def run_single_shot(
         transcript=transcript,
     )
 
-    suffix = format_usage_suffix(usage)
+    suffix = format_usage_suffix(usage, model=resolved_model)
     if capture_transcript and delegation_id is not None:
         suffix += f"\n\n[delegation_id: {delegation_id}]"
 

@@ -94,8 +94,9 @@ def delegate_agentic_task(
 def list_recent_delegations(limit: int = 20) -> list[dict]:
     """List the most recent delegate_task / delegate_agentic_task calls
     (backend, model, task, duration, iterations, success, token usage,
-    truncated result), most recent first. Answers "what did the delegated
-    model actually do" without re-running anything.
+    USD cost if the model has a pricing.json entry, truncated result), most
+    recent first. Answers "what did the delegated model actually do" without
+    re-running anything.
 
     Args:
         limit: Max number of records to return (default 20).

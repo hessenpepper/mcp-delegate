@@ -95,10 +95,24 @@ token usage if the backend returned it. Query it via the `list_recent_delegation
 directly with `sqlite3 delegations.db "select * from delegations order by id desc limit 20"`.
 Logging is best-effort — a logging failure won't take down an otherwise-successful delegation.
 
-Both tools also append a trailing `[tokens: N prompt / N completion / N total]` line to their
-own return value when the backend reports usage, so the calling agent sees it immediately
-without a separate `list_recent_delegations` call. No dollar-cost calculation is done anywhere
-(that would need a per-model pricing table) — token counts only.
+Both tools also append a trailing `[tokens: N prompt / N completion / N total ($cost)]` line to
+their own return value when the backend reports usage, so the calling agent sees it immediately
+without a separate `list_recent_delegations` call.
+
+### Cost tracking
+
+[pricing.json](pricing.json) maps model string → `{input_per_million, output_per_million}` USD
+rates. When a call's resolved model has an entry, cost is computed from actual token usage,
+logged to `delegations.db` (`cost_usd` column), and included in the `[tokens: ...]` suffix.
+A model with **no** entry logs `cost_usd = NULL` — unknown, not assumed free — so a missing
+entry can't silently under-report spend. Local models generally won't have entries for that
+reason; genuinely free models (e.g. OpenRouter `:free` models) get an explicit
+`{"input_per_million": 0, "output_per_million": 0}` entry instead of being omitted.
+
+Unlike `.env`/`models.json`, `pricing.json` isn't a secret or environment-specific, so it's
+committed directly rather than gitignored. Prices drift — the shipped file was fetched from
+OpenRouter's `/api/v1/models` on 2026-08-21 for the models named in a model-comparison bake-off
+this was built for; re-fetch and edit it to add/update models as needed.
 
 ### Transcript capture (model comparison / eval runs)
 

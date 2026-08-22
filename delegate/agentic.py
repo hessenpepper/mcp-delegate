@@ -79,7 +79,7 @@ def run_agentic_task(
             usage=usage_totals if usage_seen else None,
             transcript=messages if capture_transcript else None,
         )
-        suffix = format_usage_suffix(usage_totals if usage_seen else None)
+        suffix = format_usage_suffix(usage_totals if usage_seen else None, model=resolved_model)
         if capture_transcript and delegation_id is not None:
             suffix += f"\n\n[delegation_id: {delegation_id}]"
         return suffix
